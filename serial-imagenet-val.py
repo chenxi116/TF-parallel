@@ -5,12 +5,11 @@ import sys; sys.path.append('./models/slim')
 import os; os.environ['CUDA_VISIBLE_DEVICES'] = sys.argv[1]
 import tensorflow as tf
 import numpy as np
+import cv2
 
 from PIL import Image
 from nets.inception_v4 import inception_v4
 from nets.inception_utils import inception_arg_scope
-from preprocessing import inception_preprocessing
-from datasets import imagenet
 
 slim = tf.contrib.slim
 
@@ -20,7 +19,7 @@ c1, c5 = 0, 0
 lines = np.loadtxt('imagenet/val.txt', str, delimiter='\n')
 
 with tf.Graph().as_default():
-    eval_inputs = tf.Variable(tf.zeros([1, height, width, 3]))
+    eval_inputs = tf.placeholder(tf.float32, [1, height, width, 3])
     with slim.arg_scope(inception_arg_scope()):
         logits, _ = inception_v4(eval_inputs, num_classes,
                                        is_training=False)
@@ -35,15 +34,16 @@ with tf.Graph().as_default():
     init_fn(sess)
 
     for idx, line in enumerate(lines):
+        
         [imname, label] = line.split(' ')
         label = int(label) + 1
         im = np.array(Image.open('imagenet/ILSVRC2012_img_val/' + imname).convert('RGB'))
-        image = tf.convert_to_tensor(im)
-        processed_image = inception_preprocessing.preprocess_image(image, 
-            height, width, is_training=False)
-        processed_images = tf.expand_dims(processed_image, 0)
-        sess.run(tf.assign(eval_inputs, processed_images))
-        pred, prob = sess.run([predictions, probabilities])
+        processed_image = cv2.resize(im, (width, height), interpolation=cv2.INTER_AREA)
+        processed_image = (processed_image.astype(np.float32) / 256 - 0.5) * 2
+        processed_images = np.expand_dims(processed_image, axis=0)
+        pred, prob = sess.run([predictions, probabilities], feed_dict={
+                eval_inputs: processed_images
+            })
         prob = prob[0, 0:]
         sorted_inds = [i[0] for i in sorted(enumerate(-prob), key=lambda x:x[1])]
 
@@ -54,3 +54,4 @@ with tf.Graph().as_default():
         if label in top5:
             c5 += 1
         print('images: %d\ttop 1: %0.4f\ttop 5: %0.4f' % (idx + 1, c1/(idx + 1), c5/(idx + 1)))
+        
