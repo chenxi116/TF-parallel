@@ -36,7 +36,9 @@ class tictoc:
 
 # multi-threading environment
 from multiprocessing import Process, Queue, Lock
+from multiprocessing.queues import SimpleQueue
 from math import floor
+fetch_test = False
 def fetch_img(prc_i, num_t, img_q):
     lines = np.loadtxt('imagenet/val.txt', str, delimiter='\n')
     steps = int(floor(lines.size / num_t))
@@ -55,11 +57,13 @@ def fetch_img(prc_i, num_t, img_q):
         processed_images = np.expand_dims(processed_image, axis=0)
         img_q.put([processed_images, label])
 
-img_q = Queue(maxsize=256)
+# img_q = Queue(maxsize=1024)
+img_q = SimpleQueue()
 num_t = int(sys.argv[2])
 prc_l = []
 for i in range(num_t):
     prc_l.append(Process(target=fetch_img, args=(i, num_t, img_q)))
+    prc_l[-1].daemon=True
     prc_l[-1].start()
 
 with tf.Graph().as_default():
@@ -81,6 +85,11 @@ with tf.Graph().as_default():
 
     while img_cnt < img_tlt:
         processed_images, label = img_q.get()
+        if fetch_test:
+            img_cnt += 1
+            sys.stdout.write('\r{:07d}/{:07d}'.format(img_cnt, img_tlt))
+            sys.stdout.flush()
+            continue
         pred, prob = sess.run([predictions, probabilities], feed_dict={
                 eval_inputs: processed_images
             })
