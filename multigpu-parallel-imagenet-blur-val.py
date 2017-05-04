@@ -16,6 +16,9 @@ from PIL import Image
 from PIL import ImageFilter
 from nets.inception_v4 import inception_v4
 from nets.inception_utils import inception_arg_scope
+from collections import namedtuple
+
+OP = namedtuple('OP', 'input pred prob')
 
 slim = tf.contrib.slim
 
@@ -23,6 +26,7 @@ height, width = 299, 299
 num_classes = 1001
 c1, c5 = 0, 0
 lines = np.loadtxt('imagenet/val.txt', str, delimiter='\n')
+nb_gpus = len(sys.argv[1].split(','))
 
 # Gaussian filter instance
 flt = ImageFilter.ModeFilter(size=3)
@@ -71,23 +75,8 @@ for i in range(num_t):
     prc_l[-1].daemon=True
     prc_l[-1].start()
 
-with tf.Graph().as_default():
-    eval_inputs = tf.placeholder(tf.float32, [1, height, width, 3])
-    with slim.arg_scope(inception_arg_scope()):
-        logits, _ = inception_v4(eval_inputs, num_classes,
-                                       is_training=False)
-    predictions = tf.argmax(logits, 1)
-    probabilities = tf.nn.softmax(logits)
-
-    init_fn = slim.assign_from_checkpoint_fn(
-        'checkpoints/inception_v4.ckpt',
-        slim.get_model_variables('InceptionV4'))
-
-    sess = tf.Session()
-    init_fn(sess)
+def eval(rank, sess, op, img_tlt):
     img_cnt = 0
-    img_tlt = lines.size
-
     while img_cnt < img_tlt:
         processed_images, label = img_q.get()
         if fetch_test:
@@ -95,8 +84,8 @@ with tf.Graph().as_default():
             sys.stdout.write('\r{:07d}/{:07d}'.format(img_cnt, img_tlt))
             sys.stdout.flush()
             continue
-        pred, prob = sess.run([predictions, probabilities], feed_dict={
-                eval_inputs: processed_images
+        pred, prob = sess.run([op.predictions, op.probabilities], feed_dict={
+                op.eval_inputs: processed_images
             })
         prob = prob[0, 0:]
         sorted_inds = [i[0] for i in sorted(enumerate(-prob), key=lambda x:x[1])]
@@ -108,8 +97,40 @@ with tf.Graph().as_default():
         if label in top5:
             c5 += 1
         idx = img_cnt
-        print('images: %d\ttop 1: %0.4f\ttop 5: %0.4f' % (idx + 1, c1/(idx + 1), c5/(idx + 1)))
+        print('gpu %d images: %d\ttop 1: %0.4f\ttop 5: %0.4f' % (rank, idx + 1, c1/(idx + 1), c5/(idx + 1)))
         img_cnt += 1
+
+with tf.Graph().as_default():
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    config.log_device_placement = True
+    sess = tf.Session(config=config)
+    subgraph = []
+    for gpu in range(nb_gpus):
+        with tf.device('/gpu:%d' % gpu):
+            eval_input = tf.placeholder(tf.float32, [1, height, width, 3])
+            with slim.arg_scope(inception_arg_scope()):
+                logits, _ = inception_v4(eval_input, num_classes,
+                                               is_training=False)
+            predictions = tf.argmax(logits, 1)
+            probabilities = tf.nn.softmax(logits)
+            subgraph.append(OP(eval_input, predictions, probabilities))
+
+            init_fn = slim.assign_from_checkpoint_fn(
+                'checkpoints/inception_v4.ckpt',
+                slim.get_model_variables('InceptionV4'))
+
+            init_fn(sess)
+    img_tlt = lines.size
+    prc_g = []
+    for gpu in range(nb_gpus):
+        img_per_gpu = img_tlt - img_tlt / len(gpus) if i == 0 else img_tlt / len(gpus)
+        prc_g.append(Process(target=eval, args=(gpu, sess, subgraph[gpu], img_per_gpu)))
+        prc_g[-1].daemon=True
+        prc_g[-1].start()
+
 
 for i in range(num_t):
     prc_l[i].join()
+for gpu in range(nb_gpus):
+    prc_g[gpu].join()
