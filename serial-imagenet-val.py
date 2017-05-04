@@ -5,7 +5,12 @@ import sys; sys.path.append('./models/slim')
 import os; os.environ['CUDA_VISIBLE_DEVICES'] = sys.argv[1]
 import tensorflow as tf
 import numpy as np
-import cv2
+try:
+    import cv2
+    imresize = lambda x, dim: cv2.resize(x, dim, interpolation=cv2.INTER_AREA) 
+except:
+    import scipy
+    imresize = lambda x, dim: scipy.misc.imresize(x, dim)
 
 from PIL import Image
 from nets.inception_v4 import inception_v4
@@ -30,7 +35,9 @@ with tf.Graph().as_default():
         'checkpoints/inception_v4.ckpt',
         slim.get_model_variables('InceptionV4'))
 
-    sess = tf.Session()
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    sess = tf.Session(config=config)
     init_fn(sess)
 
     for idx, line in enumerate(lines):
@@ -38,7 +45,7 @@ with tf.Graph().as_default():
         [imname, label] = line.split(' ')
         label = int(label) + 1
         im = np.array(Image.open('imagenet/ILSVRC2012_img_val/' + imname).convert('RGB'))
-        processed_image = cv2.resize(im, (width, height), interpolation=cv2.INTER_AREA)
+        processed_image = imresize(im, (width, height))
         processed_image = (processed_image.astype(np.float32) / 256 - 0.5) * 2
         processed_images = np.expand_dims(processed_image, axis=0)
         pred, prob = sess.run([predictions, probabilities], feed_dict={

@@ -83,9 +83,7 @@ with tf.Graph().as_default():
         'checkpoints/inception_v4.ckpt',
         slim.get_model_variables('InceptionV4'))
 
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True
-    sess = tf.Session(config=config)
+    sess = tf.Session()
     init_fn(sess)
     img_cnt = 0
     img_tlt = lines.size
