@@ -106,11 +106,14 @@ def eval(rank, img_q, sess, op, img_tlt):
         img_cnt += 1
 
 def eval_multi(nb_gpus, img_q, sess, ops, img_tlt):
+    st = time.time()
     assert len(ops) == nb_gpus
     img_cnt = 0
     c1, c5 = 0, 0
     end_while = False
     while img_cnt < img_tlt:
+        if img_cnt == 100:
+            break
         input = {}
         target = []
         output = []
@@ -118,7 +121,7 @@ def eval_multi(nb_gpus, img_q, sess, ops, img_tlt):
             if img_cnt >= img_tlt:
                 end_while = True
                 break
-            processed_images, label = img_q.get()
+            # processed_images, label = img_q.get()
             input[op.input] = processed_images
             output.append((op.pred, op.prob))
             target.append(label)
@@ -143,9 +146,10 @@ def eval_multi(nb_gpus, img_q, sess, ops, img_tlt):
                 c5 += 1
             idx = img_cnt
             print('images: %d\ttop 1: %0.4f\ttop 5: %0.4f' % (idx + 1, c1/(idx + 1), c5/(idx + 1)))
+    print('time', time.time() - st)
 
 with tf.Graph().as_default():
-    subgraph = []
+    ops = []
     for gpu in range(nb_gpus):
         print('loading graph on /gpu:%d' % gpu)
         with tf.name_scope('tower-%d' % gpu):
@@ -153,12 +157,12 @@ with tf.Graph().as_default():
             with tf.device('/gpu:%d' % gpu):
                 with slim.arg_scope(inception_arg_scope()):
                     resue = None if gpu == 0 else True
-                    logits, _ = inception_v4(eval_input, num_classes, reuse=resue,
-                                             scope='InceptionV4',
+                    logits, _ = inception_v4(eval_input, num_classes,
+                                             reuse=resue, scope='InceptionV4',
                                              is_training=False)
             predictions = tf.argmax(logits, 1)
             probabilities = tf.nn.softmax(logits)
-            subgraph.append(OP(eval_input, predictions, probabilities))
+            ops.append(OP(predictions, probabilities))
     
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -173,7 +177,7 @@ with tf.Graph().as_default():
 
     print('finish building graph')
     img_tlt = lines.size
-    # eval_multi(nb_gpus, img_q, sess, subgraph, img_tlt)
+    # eval_multi(nb_gpus, img_q, sess, eval_input, ops, img_tlt)
     prc_g = []
     for gpu in range(nb_gpus):
         img_per_gpu = img_tlt - img_tlt / nb_gpus if i == 0 else img_tlt / nb_gpus
@@ -185,5 +189,5 @@ with tf.Graph().as_default():
 
 for i in range(num_t):
     prc_l[i].join()
-for gpu in range(nb_gpus):
-    prc_g[gpu].join()
+# for gpu in range(nb_gpus):
+#     prc_g[gpu].join()
