@@ -19,6 +19,7 @@ from nets.inception_utils import inception_arg_scope
 from collections import namedtuple
 
 OP = namedtuple('OP', 'input pred prob')
+EvalRes = namedtuple('EvalRes', 'c1 c5 img_cnt')
 
 slim = tf.contrib.slim
 
@@ -43,7 +44,8 @@ class tictoc:
         print 'Elapsed: %s' % (time.time() - self.tstart)
 
 # multi-threading environment
-from multiprocessing import Process, Queue, Lock
+import Queue
+from multiprocessing import Process, Lock, JoinableQueue, Event
 from multiprocessing.queues import SimpleQueue
 from math import floor
 fetch_test = False
@@ -66,8 +68,7 @@ def fetch_img(prc_i, num_t, img_q):
         processed_images = np.expand_dims(processed_image, axis=0)
         img_q.put([processed_images, label])
 
-# img_q = Queue(maxsize=1024)
-img_q = SimpleQueue()
+img_q = JoinableQueue()
 num_t = int(sys.argv[2])
 prc_l = []
 for i in range(num_t):
@@ -80,7 +81,7 @@ import threading
 counter = 0
 counter_lock = threading.Lock()
 
-def eval(gpu, img_q, img_tlt):
+def eval(gpu, img_q, res_q, end_eval):
     ###############
     # Build graph #
     ###############
@@ -117,8 +118,11 @@ def eval(gpu, img_q, img_tlt):
     st = time.time()
     img_cnt = 0
     c1, c5 = 0, 0
-    while img_cnt < img_tlt:
-        processed_images, label = img_q.get()
+    while not end_eval.is_set():
+        try:
+            processed_images, label = img_q.get(False)
+        except Queue.Empty:
+            continue
         if fetch_test:
             img_cnt += 1
             sys.stdout.write('\r{:07d}/{:07d}'.format(img_cnt, img_tlt))
@@ -139,63 +143,43 @@ def eval(gpu, img_q, img_tlt):
         idx = img_cnt
         print('gpu %d images: %d\ttop 1: %0.4f\ttop 5: %0.4f' % (gpu, idx + 1, c1/(idx + 1), c5/(idx + 1)))
         img_cnt += 1
+        img_q.task_done()
+    res_q.put(EvalRes(c1, c5, img_cnt))
     print('gpu %d finish in %.4f sec' % (gpu, time.time()-st))
-
-def eval_multi(nb_gpus, img_q, sess, ops, img_tlt):
-    st = time.time()
-    assert len(ops) == nb_gpus
-    img_cnt = 0
-    c1, c5 = 0, 0
-    end_while = False
-    while img_cnt < img_tlt:
-        input = {}
-        target = []
-        output = []
-        for op in ops:
-            if img_cnt >= img_tlt:
-                end_while = True
-                break
-            processed_images, label = img_q.get()
-            input[op.input] = processed_images
-            output.append((op.pred, op.prob))
-            target.append(label)
-            img_cnt += 1
-        if end_while:
-            break
-        if fetch_test:
-            img_cnt += 1
-            sys.stdout.write('\r{:07d}/{:07d}'.format(img_cnt, img_tlt))
-            sys.stdout.flush()
-            continue
-        out = sess.run(output, feed_dict=input)
-        for (_, prob), label in zip(out, target):
-            prob = prob[0, 0:]
-            sorted_inds = [i[0] for i in sorted(enumerate(-prob), key=lambda x:x[1])]
-
-            top1 = sorted_inds[0]
-            top5 = sorted_inds[0:5]
-            if label == top1:
-                c1 += 1
-            if label in top5:
-                c5 += 1
-            idx = img_cnt
-            print('images: %d\ttop 1: %0.4f\ttop 5: %0.4f' % (idx + 1, c1/(idx + 1), c5/(idx + 1)))
-    print('time', time.time() - st)
 
 print('begin building graph')
 img_tlt = lines.size
-img_tlt = 200
-# eval_multi(nb_gpus, img_q, sess, eval_input, ops, img_tlt)
 prc_g = []
+res_q = SimpleQueue()
+end_eval = Event()
 for gpu in range(nb_gpus):
-    img_per_gpu = img_tlt - img_tlt / nb_gpus if i == 0 else img_tlt / nb_gpus
-    # eval(gpu, img_q, sess, subgraph[gpu], img_per_gpu)
-    prc_g.append(Process(target=eval, args=(gpu, img_q, img_per_gpu)))
+    prc_g.append(Process(target=eval,
+                         args=(gpu, img_q, res_q, end_eval)))
     prc_g[-1].daemon=True
     prc_g[-1].start()
 
-
 for i in range(num_t):
     prc_l[i].join()
+    print('join prefetch thread %d' % i)
+print('prefetch end')
+
+img_q.join()
+print('join prefetch queue')
+
+end_eval.set()
+print('end eval')
+
+eval_cnt = 0
+c1, c5 = 0, 0
 for gpu in range(nb_gpus):
+    print('join gpu %d' % gpu)
     prc_g[gpu].join()
+    eval_res = res_q.get()
+    eval_cnt += eval_res.img_cnt
+    c1       += eval_res.c1
+    c5       += eval_res.c5
+assert eval_cnt == img_tlt
+print('='*40)
+print('top 1: %0.4f\ttop 5: %0.4f' % (c1/img_tlt, c5/img_tlt))
+print('='*40)
+
