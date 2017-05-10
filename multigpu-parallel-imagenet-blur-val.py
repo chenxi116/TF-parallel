@@ -44,9 +44,9 @@ class tictoc:
         print 'Elapsed: %s' % (time.time() - self.tstart)
 
 # multi-threading environment
-import Queue
-from multiprocessing import Process, Lock, JoinableQueue, Event
-from multiprocessing.queues import SimpleQueue
+import Queue as Q
+from multiprocessing import Process, Lock, Event
+from multiprocessing.queues import SimpleQueue, Queue
 from math import floor
 fetch_test = False
 def fetch_img(prc_i, num_t, img_q):
@@ -62,13 +62,13 @@ def fetch_img(prc_i, num_t, img_q):
         label = int(label) + 1
         im = Image.open('imagenet/ILSVRC2012_img_val/' + imname).convert('RGB')
         # FIXME
-        im = np.array(im.filter(flt))
+        # im = np.array(im.filter(flt))
         processed_image = imresize(im, (width, height))
         processed_image = (processed_image.astype(np.float32) / 256 - 0.5) * 2
         processed_images = np.expand_dims(processed_image, axis=0)
         img_q.put([processed_images, label])
 
-img_q = JoinableQueue()
+img_q = Queue()
 num_t = int(sys.argv[2])
 prc_l = []
 for i in range(num_t):
@@ -121,7 +121,7 @@ def eval(gpu, img_q, res_q, end_eval):
     while not end_eval.is_set():
         try:
             processed_images, label = img_q.get(False)
-        except Queue.Empty:
+        except Q.Empty:
             continue
         if fetch_test:
             img_cnt += 1
@@ -143,7 +143,6 @@ def eval(gpu, img_q, res_q, end_eval):
         idx = img_cnt
         print('gpu %d images: %d\ttop 1: %0.4f\ttop 5: %0.4f' % (gpu, idx + 1, c1/(idx + 1), c5/(idx + 1)))
         img_cnt += 1
-        img_q.task_done()
     res_q.put(EvalRes(c1, c5, img_cnt))
     print('gpu %d finish in %.4f sec' % (gpu, time.time()-st))
 
@@ -162,9 +161,6 @@ for i in range(num_t):
     prc_l[i].join()
     print('join prefetch thread %d' % i)
 print('prefetch end')
-
-img_q.join()
-print('join prefetch queue')
 
 end_eval.set()
 print('end eval')
