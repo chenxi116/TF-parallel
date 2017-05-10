@@ -89,19 +89,19 @@ def eval(gpu, img_q, res_q, end_eval):
         print('loading graph on /gpu:%d' % gpu)
         with tf.name_scope('tower-%d' % gpu):
             eval_input = tf.placeholder(tf.float32, [1, height, width, 3])
-            with tf.device('/gpu:%d' % gpu):
-                with slim.arg_scope(inception_arg_scope()):
-                    with counter_lock:
-                        global counter
-                        resue = None if counter == 0 else True
-                        counter += 1
-                    logits, _ = inception_v4(eval_input, num_classes,
-                                             reuse=resue, scope='InceptionV4',
-                                             is_training=False)
+            with slim.arg_scope(inception_arg_scope()):
+                with counter_lock:
+                    global counter
+                    resue = None if counter == 0 else True
+                    counter += 1
+                logits, _ = inception_v4(eval_input, num_classes,
+                                         reuse=resue, scope='InceptionV4',
+                                         is_training=False)
             predictions = tf.argmax(logits, 1)
             probabilities = tf.nn.softmax(logits)
         
         config = tf.ConfigProto()
+        config.gpu_options.visible_device_list = str(gpu)
         config.gpu_options.allow_growth = True
         # config.log_device_placement = True
         # config.allow_soft_placement = True
