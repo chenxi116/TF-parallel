@@ -61,8 +61,7 @@ def fetch_img(prc_i, num_t, img_q):
         imname, label = lines[i].split(' ')
         label = int(label) + 1
         im = Image.open('imagenet/ILSVRC2012_img_val/' + imname).convert('RGB')
-        # FIXME
-        # im = np.array(im.filter(flt))
+        im = np.array(im.filter(flt))
         processed_image = imresize(im, (width, height))
         processed_image = (processed_image.astype(np.float32) / 256 - 0.5) * 2
         processed_images = np.expand_dims(processed_image, axis=0)
