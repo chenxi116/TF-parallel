@@ -30,3 +30,15 @@ python serial-one.py 0
 python serial-imagenet-val.py 0
 ```
 The `0` is the GPU_ID.
+
+### Mode Filtering and Parallel Image Fetching
+```
+python parallel-imagenet-blur-val.py 0 32
+```
+The `0` is the GPU_ID and the `32` is the number of threads.
+
+### Multi-GPU with Mode Filtering and Parallel Image Fetching
+```
+python multigpu-parallel-imagenet-blur-val.py 0,1 32
+```
+The `0,1` is the GPU_ID and the `32` is the number of threads.
